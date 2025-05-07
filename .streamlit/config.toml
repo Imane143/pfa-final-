@@ -1,24 +1,8 @@
-[server]
-# Supprime le message sur la collecte de statistiques (optionnel)
-gatherUsageStats = false 
-
 [client]
-# Supprime le bouton "Deploy" (s'applique si Streamlit le détecte comme déployable)
 showDeployButton = false
 
-[ui]
-# Contrôle la visibilité des options du menu hamburger (trois barres en haut à droite)
-hideTopBar = false # Garde la barre supérieure visible
-hideSidebarNav = true # Cache la navigation si tu avais plusieurs pages (pas notre cas)
-
 [toolbar]
-# Options spécifiques pour la barre d'outils dans le menu hamburger
-# Met à false ce que tu veux cacher:
-runOnSave = true      # Laisse peut-être celui-là ? Se met à jour auto quand tu sauves.
-showRerunButton = false # Cache 'Rerun'
-showStopButton = true   # Laisse 'Stop'
-showClearCacheButton = false # Cache 'Clear cache'
-showViewFullscreenButton = true # Laisse 'Fullscreen'
-showAboutButton = false # Cache 'About'
-showReportAnIssueButton = false # Cache 'Report an issue'
-showDeployAppButton = false # Double sécurité pour cacher Deploy
+showRerunButton = false
+showClearCacheButton = false
+showAboutButton = false
+showReportAnIssueButton = false 
