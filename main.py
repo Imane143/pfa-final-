@@ -1,13 +1,22 @@
 # --- Code main.py - Intégration Login & Historique - STRUCTURE CORRIGÉE ---
 
+from database_manager import initialize_database, migrate_from_json
 import os
 import streamlit as st
 from dotenv import load_dotenv
 import tempfile
 import sys
+# --- Database initialization ---
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chatbot_data.db")
+if not os.path.exists(DB_PATH):
+    st.info("First run detected: Setting up database...")
+    initialize_database()
+    migrate_from_json()
+    st.success("Database initialized successfully!")
 # --- Imports pour Auth & Historique ---
 from user_auth import display_login_ui, is_user_authenticated, get_current_username
-from conversation_history import display_history_sidebar, save_current_conversation, load_user_history
+from conversation_history import display_history_sidebar, save_current_conversation
+from database_manager import load_user_conversations as load_user_history
 # --- Nouveaux imports modulaires ---
 from theme_manager import add_theme_selector
 from pdf_processor import process_uploaded_pdf, get_raw_document_text

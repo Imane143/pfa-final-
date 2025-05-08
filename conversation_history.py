@@ -1,90 +1,15 @@
-import os
-import json
+"""
+conversation_history.py - Module to manage conversation histories using SQLite database
+"""
 import streamlit as st
-from datetime import datetime
-
-# Path to conversation histories folder - CORRECTION
-HISTORY_FOLDER = os.path.join(os.path.expanduser("~"), "Documents", "educational_chatbot_histories")
-
-def initialize_history_folder():
-    """Create the histories folder if it doesn't exist"""
-    if not os.path.exists(HISTORY_FOLDER):
-        os.makedirs(HISTORY_FOLDER)
-
-def get_user_history_path(username):
-    """Get the path to the user's history file"""
-    initialize_history_folder()
-    return os.path.join(HISTORY_FOLDER, f"{username}_history.json")
-
-def load_user_history(username):
-    """Load a user's conversation history"""
-    file_path = get_user_history_path(username)
-    
-    if not os.path.exists(file_path):
-        return {}
-    
-    try:
-        with open(file_path, 'r') as file:
-            return json.load(file)
-    except json.JSONDecodeError:
-        # If file is corrupted, reset it
-        return {}
-
-def save_conversation(username, conversation_id, title, messages):
-    """Save a conversation to the user's history"""
-    if not username:
-        return None
-        
-    history = load_user_history(username)
-    
-    # If it's a new conversation, create a new ID
-    if not conversation_id:
-        conversation_id = datetime.now().strftime("%Y%m%d%H%M%S")
-    
-    # Generate a title if none is provided
-    if not title and messages:
-        # Use the beginning of the first user question as the title
-        for msg in messages:
-            if msg['role'] == 'user':
-                title = msg['content'][:30] + '...' if len(msg['content']) > 30 else msg['content']
-                break
-        if not title:
-            title = f"Conversation {conversation_id}"
-    
-    # Update the history
-    history[conversation_id] = {
-        'title': title,
-        'last_updated': datetime.now().isoformat(),
-        'messages': messages,
-        'document': st.session_state.get('processed_file_name', '')
-    }
-    
-    # Save to file
-    with open(get_user_history_path(username), 'w') as file:
-        json.dump(history, file)
-    
-    return conversation_id
-
-def delete_conversation(username, conversation_id):
-    """Delete a conversation from the history"""
-    history = load_user_history(username)
-    
-    if conversation_id in history:
-        del history[conversation_id]
-        
-        with open(get_user_history_path(username), 'w') as file:
-            json.dump(history, file)
-        
-        return True
-    
-    return False
+from database_manager import save_conversation, load_user_conversations, load_conversation, delete_conversation
 
 def display_history_sidebar(username):
     """Display the conversation history sidebar"""
     if not username:
         return None
     
-    history = load_user_history(username)
+    history = load_user_conversations(username)
     
     if not history:
         st.sidebar.info("No saved conversations.")
@@ -108,7 +33,13 @@ def display_history_sidebar(username):
     for conv_id, conv_data in sorted(history.items(), key=lambda x: x[1]['last_updated'], reverse=True):
         title = conv_data['title']
         document = conv_data.get('document', '')
-        date = datetime.fromisoformat(conv_data['last_updated']).strftime("%d/%m/%Y")
+        # Convert ISO format date to display format
+        try:
+            from datetime import datetime
+            date_obj = datetime.fromisoformat(conv_data['last_updated'])
+            date = date_obj.strftime("%d/%m/%Y")
+        except:
+            date = conv_data['last_updated'][:10]  # Fallback
         
         # Display a label for the associated document
         doc_label = f" 📄 {document}" if document else ""
@@ -146,8 +77,15 @@ def save_current_conversation(username):
     
     conversation_id = st.session_state.get('current_conversation_id')
     title = None  # Let the save_conversation function generate a title
+    document_name = st.session_state.get('processed_file_name', '')
     
-    new_id = save_conversation(username, conversation_id, title, st.session_state.messages)
+    new_id = save_conversation(
+        username=username, 
+        conversation_id=conversation_id, 
+        title=title, 
+        messages=st.session_state.messages,
+        document_name=document_name
+    )
     
     if not conversation_id:
         st.session_state.current_conversation_id = new_id
