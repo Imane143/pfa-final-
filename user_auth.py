@@ -87,9 +87,11 @@ def display_login_ui():
             st.session_state.username = ""
             # Reset other user-related session states
             if 'messages' in st.session_state:
-                st.session_state.messages = [{"role": "assistant", "content": "Hello! Please upload a course PDF to begin."}]
+                st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you today?"}]
             if 'current_conversation_id' in st.session_state:
                 st.session_state.current_conversation_id = None
+            if 'loaded_convo_id' in st.session_state:
+                st.session_state.loaded_convo_id = None
             st.rerun()
     else:
         with st.sidebar.expander("🔐 Login / Sign up", expanded=not st.session_state.user_authenticated):

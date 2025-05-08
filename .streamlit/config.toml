@@ -1,8 +1,12 @@
 [client]
 showDeployButton = false
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
 
 [toolbar]
 showRerunButton = false
 showClearCacheButton = false
 showAboutButton = false
-showReportAnIssueButton = false 
+showReportAnIssueButton = false

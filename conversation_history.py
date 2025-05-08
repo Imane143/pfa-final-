@@ -3,8 +3,8 @@ import json
 import streamlit as st
 from datetime import datetime
 
-# Path to conversation histories folder
-HISTORY_FOLDER = "conversation_histories"
+# Path to conversation histories folder - CORRECTION
+HISTORY_FOLDER = os.path.join(os.path.expanduser("~"), "Documents", "educational_chatbot_histories")
 
 def initialize_history_folder():
     """Create the histories folder if it doesn't exist"""
@@ -56,12 +56,8 @@ def save_conversation(username, conversation_id, title, messages):
         'title': title,
         'last_updated': datetime.now().isoformat(),
         'messages': messages,
-        'document': os.path.basename(history.get(conversation_id, {}).get('document', '')) if conversation_id in history else ''
+        'document': st.session_state.get('processed_file_name', '')
     }
-    
-    # If the conversation is associated with a document, store this information
-    if 'processed_file_name' in st.session_state and st.session_state.processed_file_name:
-        history[conversation_id]['document'] = st.session_state.processed_file_name
     
     # Save to file
     with open(get_user_history_path(username), 'w') as file:
@@ -105,6 +101,7 @@ def display_history_sidebar(username):
     if st.sidebar.button("➕ New Conversation"):
         st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you today?"}]
         st.session_state.current_conversation_id = None
+        st.session_state.loaded_convo_id = None  # IMPORTANT: Reset loaded convo ID
         st.rerun()
     
     # List of conversations
@@ -123,6 +120,7 @@ def display_history_sidebar(username):
         if col1.button(f"{title}{doc_label}\n{date}", key=f"hist_{conv_id}"):
             st.session_state.messages = conv_data['messages']
             st.session_state.current_conversation_id = conv_id
+            st.session_state.loaded_convo_id = conv_id  # IMPORTANT: Set loaded convo ID
             
             # If the conversation is associated with a document different from the current one
             if document and document != st.session_state.get('processed_file_name', ''):
@@ -135,6 +133,7 @@ def display_history_sidebar(username):
             if delete_conversation(username, conv_id):
                 if st.session_state.current_conversation_id == conv_id:
                     st.session_state.current_conversation_id = None
+                    st.session_state.loaded_convo_id = None  # IMPORTANT: Reset loaded convo ID
                     st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you today?"}]
                 st.rerun()
     
@@ -152,3 +151,4 @@ def save_current_conversation(username):
     
     if not conversation_id:
         st.session_state.current_conversation_id = new_id
+        st.session_state.loaded_convo_id = new_id  # IMPORTANT: Update loaded convo ID
