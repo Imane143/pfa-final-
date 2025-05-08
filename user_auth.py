@@ -88,8 +88,9 @@ def set_auth_cookie(username):
     """Set authentication cookie for persistence using multiple approaches"""
     token, expiry = create_session_token(username)
     
-    # Store in session state
+    # Store in session state in multiple ways for redundancy
     st.session_state.auth_token = token
+    st.session_state.stored_token = token
     
     # Format expiry for cookie
     expiry_str = datetime.fromtimestamp(expiry).strftime('%a, %d %b %Y %H:%M:%S GMT')
@@ -101,46 +102,41 @@ def set_auth_cookie(username):
     try {{
         // Primary method: localStorage (most reliable for Streamlit)
         localStorage.setItem('{SESSION_COOKIE_NAME}', '{token}');
+        console.log("Token stored in localStorage");
         
         // Backup method: cookies
         document.cookie = "{SESSION_COOKIE_NAME}={token};path=/;expires={expiry_str};SameSite=Lax";
+        console.log("Token stored in cookies");
         
-        // Add token to URL once (as fragment) for immediate use
-        // This helps with page refreshes without changing the URL each time
-        if (!window.location.hash.includes('auth_token')) {{
-            // Store temporarily in hash (not sent to server)
-            const currentHash = window.location.hash || '';
-            const newHash = currentHash + (currentHash ? '&' : '#') + 'auth_token={token}';
-            window.history.replaceState(null, document.title, newHash);
-            console.log("Auth token added to URL hash");
+        // Communication with Streamlit
+        try {{
+            window.parent.postMessage({{
+                type: "streamlit:setComponentValue",
+                value: "{token}",
+                dataType: "str",
+                key: "stored_token"
+            }}, "*");
+            console.log("Token sent to Streamlit via postMessage");
+        }} catch (e) {{
+            console.error("Error sending token to Streamlit:", e);
         }}
         
-        // Set a flag to check auth on page load
-        sessionStorage.setItem('check_auth_on_load', 'true');
+        // Add token to URL once (as parameter) for immediate use
+        if (!window.location.search.includes('auth_token')) {{
+            const separator = window.location.search ? '&' : '?';
+            const newUrl = window.location.pathname + 
+                          window.location.search + 
+                          separator + 
+                          'auth_token={token}';
+            
+            // Use history API to avoid full page reload
+            window.history.replaceState(null, document.title, newUrl);
+            console.log("Token added to URL via history API");
+        }}
         
         console.log("Authentication data saved successfully");
     }} catch (e) {{
         console.error("Error saving auth data:", e);
-    }}
-    
-    // Helper function that will be available on page load
-    function checkAuthOnLoad() {{
-        // This runs on every page load to check for stored auth data
-        const storedToken = localStorage.getItem('{SESSION_COOKIE_NAME}');
-        if (storedToken && !window.location.search.includes('auth_token')) {{
-            // Add as URL parameter to allow server to detect it
-            // Only do this if not already present in URL
-            const separator = window.location.search ? '&' : '?';
-            window.location.href = window.location.pathname + 
-                                   window.location.search + 
-                                   separator + 
-                                   'auth_token=' + storedToken;
-        }}
-    }}
-    
-    // Add a small delay to run only after page is fully loaded
-    if (sessionStorage.getItem('check_auth_on_load') === 'true') {{
-        setTimeout(checkAuthOnLoad, 100);
     }}
     </script>
     """
@@ -194,82 +190,173 @@ def check_token_in_url_or_storage():
     """
     token = None
     
-    # Try from query parameters
+    # Try from query parameters first
     try:
-        token = st.query_params.get("auth_token", [None])[0]
-        if token:
+        param_token = st.query_params.get("auth_token")
+        if param_token:
             print("Found token in URL query params")
-            return token
+            return param_token
     except Exception as e:
         print(f"Error getting token from query params: {e}")
     
+    # Try from session state (if it was stored there by previous JavaScript)
+    if "stored_token" in st.session_state and st.session_state.stored_token:
+        print("Found token in stored_token session state")
+        return st.session_state.stored_token
+    
     # Add JavaScript to check localStorage and cookies
-    # This will set a token in the URL if found in localStorage
+    # This will set both a token in the URL if found in localStorage
+    # AND store it in session_state.stored_token via Streamlit's
+    # component communication
     check_storage_js = """
     <script>
-    function checkAuthStorage() {
-        try {
-            // Check localStorage first (most reliable in Streamlit)
-            const storedToken = localStorage.getItem('auth_token');
-            if (storedToken && !window.location.search.includes('auth_token')) {
-                // Add token to URL to let server detect it
-                console.log("Found token in localStorage, adding to URL");
-                const separator = window.location.search ? '&' : '?';
-                window.location.href = window.location.pathname + 
-                                       window.location.search + 
-                                       separator + 
-                                       'auth_token=' + storedToken;
-                return true;
-            }
-            
-            // Check URL hash as fallback
-            if (window.location.hash.includes('auth_token')) {
-                // Extract token from hash
-                const hashParams = new URLSearchParams(window.location.hash.substring(1));
-                const hashToken = hashParams.get('auth_token');
-                if (hashToken && !window.location.search.includes('auth_token')) {
-                    console.log("Found token in URL hash, adding to URL params");
-                    const separator = window.location.search ? '&' : '?';
-                    window.location.href = window.location.pathname + 
-                                           window.location.search + 
-                                           separator + 
-                                           'auth_token=' + hashToken;
-                    return true;
-                }
-            }
-            
-            // Last resort - try to get from cookies
-            const cookies = document.cookie.split(';');
-            for (const cookie of cookies) {
-                const [name, value] = cookie.trim().split('=');
-                if (name === 'auth_token' && value && !window.location.search.includes('auth_token')) {
-                    console.log("Found token in cookies, adding to URL");
-                    const separator = window.location.search ? '&' : '?';
-                    window.location.href = window.location.pathname + 
-                                           window.location.search + 
-                                           separator + 
-                                           'auth_token=' + value;
-                    return true;
-                }
-            }
-        } catch (e) {
-            console.error("Error in checkAuthStorage:", e);
+    // Function to find auth token in various storage locations
+    function findAuthToken() {
+        // Check localStorage first (most reliable in Streamlit)
+        const localToken = localStorage.getItem('auth_token');
+        if (localToken) {
+            console.log("Found token in localStorage");
+            return localToken;
         }
-        return false;
+        
+        // Check URL hash as fallback
+        if (window.location.hash.includes('auth_token')) {
+            const hashParams = new URLSearchParams(window.location.hash.substring(1));
+            const hashToken = hashParams.get('auth_token');
+            if (hashToken) {
+                console.log("Found token in URL hash");
+                return hashToken;
+            }
+        }
+        
+        // Last resort - try to get from cookies
+        const cookies = document.cookie.split(';');
+        for (const cookie of cookies) {
+            const [name, value] = cookie.trim().split('=');
+            if (name === 'auth_token' && value) {
+                console.log("Found token in cookies");
+                return value;
+            }
+        }
+        
+        return null;
     }
     
-    // Run the check if no auth_token in URL already
-    if (!window.location.search.includes('auth_token')) {
-        setTimeout(checkAuthStorage, 50);
+    // Function to apply the token to the page
+    function applyAuthToken() {
+        const token = findAuthToken();
+        if (!token) return false;
+        
+        // Store token in localStorage as the primary storage method
+        localStorage.setItem('auth_token', token);
+        
+        // Add token to URL if not already there
+        if (!window.location.search.includes('auth_token')) {
+            console.log("Adding auth token to URL");
+            const separator = window.location.search ? '&' : '?';
+            const newUrl = window.location.pathname + 
+                          window.location.search + 
+                          separator + 
+                          'auth_token=' + token;
+            
+            // Use history API to avoid full page reload
+            window.history.replaceState(null, document.title, newUrl);
+            
+            // If that didn't work (e.g. in some Streamlit scenarios), reload with the token in URL
+            if (!window.location.search.includes('auth_token')) {
+                window.location.href = newUrl;
+                return true;
+            }
+        }
+        
+        // Also communicate with Streamlit via session state
+        // This is a backup method that works even when URL parameters don't
+        try {
+            const streamlitDoc = window.parent.document;
+            const tokenInput = streamlitDoc.createElement('input');
+            tokenInput.setAttribute('type', 'hidden');
+            tokenInput.setAttribute('id', 'stored_token');
+            tokenInput.setAttribute('data-stcore', token);
+            tokenInput.setAttribute('name', 'stored_token');
+            tokenInput.setAttribute('value', token);
+            streamlitDoc.body.appendChild(tokenInput);
+            
+            // Trigger a custom event that Streamlit can detect
+            const event = new Event('stored_token_updated');
+            streamlitDoc.dispatchEvent(event);
+            
+            console.log("Token communicated to Streamlit");
+        } catch (e) {
+            console.error("Error communicating with Streamlit:", e);
+        }
+        
+        return true;
     }
+    
+    // Run immediately
+    if (document.readyState === 'complete') {
+        applyAuthToken();
+    } else {
+        // Or wait for page to load if needed
+        window.addEventListener('load', applyAuthToken);
+    }
+    
+    // Also run on first Streamlit render
+    const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            if (mutation.addedNodes.length) {
+                applyAuthToken();
+                observer.disconnect();
+                break;
+            }
+        }
+    });
+    
+    observer.observe(document.body, { childList: true, subtree: true });
+    
+    // Set a flag to ensure we only redirect once
+    if (!window.authCheckRun) {
+        window.authCheckRun = true;
+        setTimeout(applyAuthToken, 300);
+    }
+    </script>
+    
+    <!-- Add listener for Streamlit session state -->
+    <script>
+    // Create a component to communicate with Streamlit
+    function sendTokenToStreamlit() {
+        const token = localStorage.getItem('auth_token');
+        if (token) {
+            window.parent.postMessage({
+                type: "streamlit:setComponentValue",
+                value: token,
+                dataType: "str",
+                key: "stored_token"
+            }, "*");
+        }
+    }
+    
+    // Try multiple times with increasing delays
+    setTimeout(sendTokenToStreamlit, 100);
+    setTimeout(sendTokenToStreamlit, 500);
+    setTimeout(sendTokenToStreamlit, 1000);
     </script>
     """
     
+    # Initialize a session state variable for the stored token
+    if "stored_token" not in st.session_state:
+        st.session_state.stored_token = None
+    
+    # Display the JS code to check storage
     st.markdown(check_storage_js, unsafe_allow_html=True)
+    
+    # Create a hidden component to receive the token from JavaScript
+    # This is a workaround to get data from JavaScript to Python in Streamlit
+    if st.session_state.stored_token:
+        token = st.session_state.stored_token
     
     # Token isn't available yet but might be after page refresh
     return token
-
 def check_authentication():
     """Check if user is authenticated via multiple methods"""
     # First check session state (for current session)
@@ -279,6 +366,10 @@ def check_authentication():
     
     # Try to get token from session state first (current session)
     token = st.session_state.get("auth_token")
+    
+    # Also check stored_token from JS communication
+    if not token and "stored_token" in st.session_state:
+        token = st.session_state.stored_token
     
     # If not in session state, check URL and storage
     if not token:
@@ -293,13 +384,15 @@ def check_authentication():
             st.session_state.username = username
             st.session_state.auth_token = token
             
+            # Also store in stored_token for redundancy
+            st.session_state.stored_token = token
+            
             # Refresh the token to extend expiry
             set_auth_cookie(username)
             
             return True, username
     
     return False, None
-
 def display_login_ui():
     """Display the login interface with enhanced persistence"""
     # Check authentication first
