@@ -90,7 +90,14 @@ def process_file_upload(uploaded_file):
         # Save conversation
         save_current_conversation(st.session_state.username)
         
-        st.success("Processing complete!")
+        # Clear the progress UI and show success
+        progress_bar.empty()
+        st.success("🎉 Processing complete! You can now ask questions about the document.")
+        
+        # Add a small delay to ensure the UI updates properly
+        import time
+        time.sleep(0.1)
+        
         return True
         
     except Exception as e:
@@ -114,7 +121,7 @@ def display_file_upload_section():
     
     if uploaded_file is not None:
         success = process_file_upload(uploaded_file)
-        if success:
-            st.rerun()
+        # Don't call st.rerun() here - let the normal flow continue
+        # The processing is complete and session state is updated
     
     return uploaded_file

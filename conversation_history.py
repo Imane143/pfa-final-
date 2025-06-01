@@ -44,8 +44,8 @@ def display_history_sidebar(username):
         # Display a label for the associated document
         doc_label = f" 📄 {document}" if document else ""
         
-        # Create columns for the button and delete button
-        col1, col2 = st.sidebar.columns([5, 1])
+        # Create columns for the buttons: load, rename, delete
+        col1, col2, col3 = st.sidebar.columns([4, 1, 1])
         
         # Display the conversation button
         if col1.button(f"{title}{doc_label}\n{date}", key=f"hist_{conv_id}"):
@@ -59,8 +59,14 @@ def display_history_sidebar(username):
             
             st.rerun()
         
+        # Rename button
+        if col2.button("✏️", key=f"rename_{conv_id}", help="Rename conversation"):
+            from conversation_rename import trigger_rename
+            trigger_rename(conv_id, title)
+            st.rerun()
+        
         # Delete button
-        if col2.button("🗑️", key=f"del_{conv_id}"):
+        if col3.button("🗑️", key=f"del_{conv_id}", help="Delete conversation"):
             if delete_conversation(username, conv_id):
                 if st.session_state.current_conversation_id == conv_id:
                     st.session_state.current_conversation_id = None

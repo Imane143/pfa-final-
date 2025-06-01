@@ -1,251 +1,256 @@
 """
-user_auth.py - Enhanced authentication module with FIXED logout functionality
+user_auth.py - Simplified and reliable authentication with proper persistence
 """
 import os
 import hashlib
-import hmac
-import base64
-import json
 import streamlit as st
 from datetime import datetime, timedelta
 from database_manager import authenticate_user, create_user
 
-# Secret key for session signing (should be in .env in production)
-SESSION_SECRET = os.getenv("SESSION_SECRET", "your_development_secret_key")
+def create_auth_key(username):
+    """Create a simple auth key for the user"""
+    timestamp = datetime.now().strftime('%Y%m%d')
+    return f"auth_{username}_{timestamp}"
 
-# Session constants
-SESSION_COOKIE_NAME = "auth_token"
-SESSION_EXPIRY_DAYS = 14
-
-def hash_password(password):
-    """Hash the password using SHA-256"""
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def create_session_token(username):
-    """Create a robust session token for the user"""
-    expiry = (datetime.now() + timedelta(days=SESSION_EXPIRY_DAYS)).timestamp()
-    
-    payload = {
-        "username": username,
-        "exp": expiry,
-        "created": datetime.now().timestamp(),
-        "random": os.urandom(8).hex()
-    }
-    
-    payload_str = json.dumps(payload)
-    payload_b64 = base64.urlsafe_b64encode(payload_str.encode()).decode()
-    
-    signature = hmac.new(
-        SESSION_SECRET.encode(), 
-        payload_b64.encode(), 
-        hashlib.sha256
-    ).hexdigest()
-    
-    token = f"{payload_b64}.{signature}"
-    return token, expiry
-
-def verify_session_token(token):
-    """Verify a session token"""
-    try:
-        parts = token.split('.')
-        if len(parts) != 2:
-            return False, None
-        
-        payload_b64, signature = parts
-        
-        expected_sig = hmac.new(
-            SESSION_SECRET.encode(),
-            payload_b64.encode(),
-            hashlib.sha256
-        ).hexdigest()
-        
-        if signature != expected_sig:
-            return False, None
-        
-        payload_str = base64.urlsafe_b64decode(payload_b64.encode()).decode()
-        payload = json.loads(payload_str)
-        
-        if datetime.now().timestamp() > payload.get('exp', 0):
-            return False, None
-        
-        return True, payload.get('username')
-    except Exception as e:
-        print(f"Session verification error: {e}")
-        return False, None
-
-def set_auth_cookie(username):
-    """Set authentication cookie for persistence"""
-    token, expiry = create_session_token(username)
+def save_auth_state(username):
+    """Save authentication state in a persistent way"""
+    auth_key = create_auth_key(username)
     
     # Store in session state
-    st.session_state.auth_token = token
-    st.session_state.stored_token = token
+    st.session_state.user_authenticated = True
+    st.session_state.username = username
+    st.session_state.auth_key = auth_key
     
-    expiry_str = datetime.fromtimestamp(expiry).strftime('%a, %d %b %Y %H:%M:%S GMT')
-    
-    js = f"""
+    # Create a more reliable JavaScript-based persistence
+    js_code = f"""
     <script>
     try {{
-        localStorage.setItem('{SESSION_COOKIE_NAME}', '{token}');
-        document.cookie = "{SESSION_COOKIE_NAME}={token};path=/;expires={expiry_str};SameSite=Lax";
-        console.log("Authentication data saved successfully");
+        // Store auth info in localStorage
+        localStorage.setItem('chatbot_auth_user', '{username}');
+        localStorage.setItem('chatbot_auth_key', '{auth_key}');
+        localStorage.setItem('chatbot_auth_time', '{datetime.now().isoformat()}');
+        
+        // Save current conversation state if it exists
+        const currentConvoId = "{st.session_state.get('current_conversation_id', '')}";
+        const processedFile = "{st.session_state.get('processed_file_name', '')}";
+        
+        if (currentConvoId) {{
+            localStorage.setItem('chatbot_current_convo', currentConvoId);
+        }}
+        if (processedFile) {{
+            localStorage.setItem('chatbot_processed_file', processedFile);
+        }}
+        
+        console.log('Auth data and state saved for user: {username}');
+        
     }} catch (e) {{
-        console.error("Error saving auth data:", e);
+        console.error('Error saving auth data:', e);
     }}
     </script>
     """
     
-    st.markdown(js, unsafe_allow_html=True)
-    return token
+    st.markdown(js_code, unsafe_allow_html=True)
 
-def clear_auth_cookie():
-    """Clear authentication cookie on logout - SIMPLIFIED VERSION"""
-    # Clear session state first
-    session_keys_to_clear = [
-        'auth_token', 'stored_token', 'user_authenticated', 'username',
+def check_auth_state():
+    """Check if user is authenticated"""
+    # First check current session state
+    if st.session_state.get("user_authenticated", False) and st.session_state.get("username"):
+        return True, st.session_state.username
+    
+    # Check if we have stored auth info and try to restore it
+    restore_js = """
+    <script>
+    function restoreAuthState() {
+        try {
+            const storedUser = localStorage.getItem('chatbot_auth_user');
+            const storedKey = localStorage.getItem('chatbot_auth_key');
+            const storedTime = localStorage.getItem('chatbot_auth_time');
+            
+            if (storedUser && storedKey && storedTime) {
+                console.log('Found stored auth data for user:', storedUser);
+                
+                // Check if auth is not too old (7 days)
+                const authTime = new Date(storedTime);
+                const now = new Date();
+                const daysDiff = (now - authTime) / (1000 * 60 * 60 * 24);
+                
+                if (daysDiff < 7) {
+                    console.log('Auth data is still valid, restoring session');
+                    
+                    // Set URL parameter to restore auth
+                    const urlParams = new URLSearchParams(window.location.search);
+                    if (!urlParams.has('restore_auth')) {
+                        urlParams.set('restore_auth', storedUser);
+                        urlParams.set('auth_key', storedKey);
+                        
+                        // Also restore conversation state if it exists
+                        const currentConvo = localStorage.getItem('chatbot_current_convo');
+                        const processedFile = localStorage.getItem('chatbot_processed_file');
+                        
+                        if (currentConvo) {
+                            urlParams.set('restore_convo', currentConvo);
+                        }
+                        if (processedFile) {
+                            urlParams.set('restore_file', processedFile);
+                        }
+                        
+                        // Reload with auth parameters - NO REDIRECT, just update URL
+                        const newUrl = window.location.pathname + '?' + urlParams.toString();
+                        window.history.replaceState({}, document.title, newUrl);
+                        
+                        // Trigger Streamlit rerun instead of full page reload
+                        window.location.reload();
+                    }
+                } else {
+                    console.log('Auth data is too old, clearing');
+                    localStorage.removeItem('chatbot_auth_user');
+                    localStorage.removeItem('chatbot_auth_key');
+                    localStorage.removeItem('chatbot_auth_time');
+                    localStorage.removeItem('chatbot_current_convo');
+                    localStorage.removeItem('chatbot_processed_file');
+                }
+            } else {
+                console.log('No stored auth data found');
+            }
+        } catch (e) {
+            console.error('Error restoring auth state:', e);
+        }
+    }
+    
+    // Only run once per page load
+    if (!sessionStorage.getItem('auth_check_done')) {
+        sessionStorage.setItem('auth_check_done', 'true');
+        restoreAuthState();
+    }
+    </script>
+    """
+    
+    st.markdown(restore_js, unsafe_allow_html=True)
+    
+    # Check URL parameters for auth restoration
+    try:
+        restore_user = st.query_params.get("restore_auth")
+        restore_key = st.query_params.get("auth_key")
+        restore_convo = st.query_params.get("restore_convo")
+        restore_file = st.query_params.get("restore_file")
+        
+        if restore_user and restore_key:
+            # Validate the auth key
+            expected_key = create_auth_key(restore_user)
+            if restore_key == expected_key:
+                # Restore authentication
+                st.session_state.user_authenticated = True
+                st.session_state.username = restore_user
+                st.session_state.auth_key = restore_key
+                
+                # Restore conversation state if provided
+                if restore_convo:
+                    st.session_state.current_conversation_id = restore_convo
+                    st.session_state.loaded_convo_id = restore_convo
+                    
+                    # Load the conversation from database
+                    try:
+                        from database_manager import load_conversation
+                        conversation = load_conversation(restore_user, restore_convo)
+                        if conversation:
+                            st.session_state.messages = conversation['messages']
+                    except Exception as e:
+                        print(f"Error loading conversation: {e}")
+                
+                if restore_file:
+                    st.session_state.processed_file_name = restore_file
+                
+                # Clean up URL parameters
+                clean_url_js = """
+                <script>
+                if (window.location.search.includes('restore_auth')) {
+                    const url = new URL(window.location);
+                    url.searchParams.delete('restore_auth');
+                    url.searchParams.delete('auth_key');
+                    url.searchParams.delete('restore_convo');
+                    url.searchParams.delete('restore_file');
+                    window.history.replaceState({}, document.title, url.pathname + url.search);
+                }
+                </script>
+                """
+                st.markdown(clean_url_js, unsafe_allow_html=True)
+                
+                return True, restore_user
+                
+    except Exception as e:
+        print(f"Error checking auth restoration: {e}")
+    
+    return False, None
+
+def clear_auth_state():
+    """Clear authentication state completely"""
+    # Clear session state
+    keys_to_clear = [
+        'user_authenticated', 'username', 'auth_key',
         'messages', 'current_conversation_id', 'loaded_convo_id',
         'vector_store', 'rag_chain', 'processed_file_name',
         'current_question', 'prerequisite_topic', 'waiting_for_prereq_response',
-        'prereq_history', 'check_prereqs', 'prereq_checkbox_state'
+        'prereq_history', 'check_prereqs', 'prereq_checkbox_state',
+        'generated_notes', 'show_notes_modal'
     ]
     
-    for key in session_keys_to_clear:
+    for key in keys_to_clear:
         if key in st.session_state:
             del st.session_state[key]
     
-    # Reset essential session state values
+    # Reset essential values
     st.session_state.user_authenticated = False
     st.session_state.username = ""
     st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you today?"}]
     
-    # Clear browser storage
-    js = """
+    # Clear browser storage and reload
+    clear_js = """
     <script>
     try {
-        localStorage.removeItem('auth_token');
-        document.cookie = "auth_token=;path=/;expires=Thu, 01 Jan 1970 00:00:00 GMT";
-        sessionStorage.clear();
-        console.log("Auth data cleared successfully");
+        // Clear all auth-related localStorage items
+        localStorage.removeItem('chatbot_auth_user');
+        localStorage.removeItem('chatbot_auth_key');
+        localStorage.removeItem('chatbot_auth_time');
+        localStorage.removeItem('chatbot_current_convo');
+        localStorage.removeItem('chatbot_processed_file');
         
-        // Force reload to completely reset the app state
+        // Clear session storage
+        sessionStorage.clear();
+        
+        console.log('Auth data cleared, reloading page');
+        
+        // Force reload to clean state
         setTimeout(function() {
             window.location.href = window.location.pathname;
         }, 100);
+        
     } catch (e) {
-        console.error("Error clearing auth data:", e);
-        // Fallback: force reload anyway
+        console.error('Error clearing auth data:', e);
+        // Force reload anyway
         window.location.href = window.location.pathname;
     }
     </script>
     """
     
-    st.markdown(js, unsafe_allow_html=True)
-
-def check_token_in_url_or_storage():
-    """Try to find auth token from multiple sources"""
-    token = None
-    
-    # Try from query parameters first
-    try:
-        param_token = st.query_params.get("auth_token")
-        if param_token:
-            return param_token
-    except Exception as e:
-        print(f"Error getting token from query params: {e}")
-    
-    # Try from session state
-    if "stored_token" in st.session_state and st.session_state.stored_token:
-        return st.session_state.stored_token
-    
-    # Check storage with JavaScript
-    check_storage_js = f"""
-    <script>
-    function findAndApplyAuthToken() {{
-        const localToken = localStorage.getItem('{SESSION_COOKIE_NAME}');
-        if (localToken && !window.location.search.includes('auth_token')) {{
-            const separator = window.location.search ? '&' : '?';
-            const newUrl = window.location.pathname + 
-                          window.location.search + 
-                          separator + 
-                          'auth_token=' + localToken;
-            window.history.replaceState(null, document.title, newUrl);
-            
-            // If URL update didn't work, force reload
-            if (!window.location.search.includes('auth_token')) {{
-                window.location.href = newUrl;
-            }}
-        }}
-    }}
-    
-    if (document.readyState === 'complete') {{
-        findAndApplyAuthToken();
-    }} else {{
-        window.addEventListener('load', findAndApplyAuthToken);
-    }}
-    </script>
-    """
-    
-    if "stored_token" not in st.session_state:
-        st.session_state.stored_token = None
-    
-    st.markdown(check_storage_js, unsafe_allow_html=True)
-    return st.session_state.stored_token
-
-def check_authentication():
-    """Check if user is authenticated via multiple methods"""
-    # First check session state (for current session)
-    if st.session_state.get("user_authenticated", False) and st.session_state.get("username", ""):
-        return True, st.session_state.username
-    
-    # Try to get token from session state first
-    token = st.session_state.get("auth_token")
-    
-    # Also check stored_token from JS communication
-    if not token and "stored_token" in st.session_state:
-        token = st.session_state.stored_token
-    
-    # If not in session state, check URL and storage
-    if not token:
-        token = check_token_in_url_or_storage()
-    
-    # If we found a token, validate it
-    if token:
-        is_valid, username = verify_session_token(token)
-        if is_valid and username:
-            # Update session state
-            st.session_state.user_authenticated = True
-            st.session_state.username = username
-            st.session_state.auth_token = token
-            st.session_state.stored_token = token
-            
-            # Refresh the token to extend expiry
-            set_auth_cookie(username)
-            
-            return True, username
-    
-    return False, None
+    st.markdown(clear_js, unsafe_allow_html=True)
 
 def display_login_ui():
-    """Display the login interface with FIXED logout functionality"""
-    # Check authentication first
-    is_auth, username = check_authentication()
+    """Display the login interface with reliable persistence"""
+    # Always check authentication state first
+    is_auth, username = check_auth_state()
+    
     if is_auth and username:
         st.session_state.user_authenticated = True
         st.session_state.username = username
     
-    # Display UI based on authentication status
+    # Display appropriate UI
     if st.session_state.get("user_authenticated", False):
         st.sidebar.success(f"Logged in as {st.session_state.username}")
         
-        # FIXED LOGOUT BUTTON with better handling
         if st.sidebar.button("Logout", key="logout_button", help="Click to log out"):
-            # Show a brief message
             with st.sidebar:
                 with st.spinner("Logging out..."):
-                    # Clear authentication data
-                    clear_auth_cookie()
-                    
-                    # Force rerun after clearing data
+                    clear_auth_state()
                     st.rerun()
     else:
         # Login/Signup interface
@@ -260,9 +265,7 @@ def display_login_ui():
                     if login_username and login_password:
                         success, message = authenticate_user(login_username, login_password)
                         if success:
-                            st.session_state.user_authenticated = True
-                            st.session_state.username = login_username
-                            set_auth_cookie(login_username)
+                            save_auth_state(login_username)
                             st.success(message)
                             st.rerun()
                         else:
@@ -283,10 +286,8 @@ def display_login_ui():
                         else:
                             success, message = create_user(signup_username, signup_password, signup_email)
                             if success:
+                                save_auth_state(signup_username)
                                 st.success(message)
-                                st.session_state.user_authenticated = True
-                                st.session_state.username = signup_username
-                                set_auth_cookie(signup_username)
                                 st.rerun()
                             else:
                                 st.error(message)
@@ -295,14 +296,12 @@ def display_login_ui():
 
 def is_user_authenticated():
     """Check if user is authenticated"""
-    is_auth, _ = check_authentication()
-    if is_auth:
-        return True
-    return st.session_state.get("user_authenticated", False)
+    is_auth, _ = check_auth_state()
+    return is_auth or st.session_state.get("user_authenticated", False)
 
 def get_current_username():
     """Get the username of the logged-in user"""
-    is_auth, username = check_authentication()
+    is_auth, username = check_auth_state()
     if is_auth and username:
         return username
     return st.session_state.get("username", "")

@@ -98,6 +98,13 @@ If there are any prerequisite concepts mentioned, include them in a separate "Pr
 def create_downloadable_notes(notes_content, filename_prefix="study_notes"):
     """Create a downloadable PDF file for the study notes"""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    # Ensure filename_prefix is not None and clean it
+    if not filename_prefix:
+        filename_prefix = "study_notes"
+    elif filename_prefix.endswith('.pdf'):
+        filename_prefix = filename_prefix.replace('.pdf', '')
+    
     filename = f"{filename_prefix}_{timestamp}.pdf"
     
     # Create PDF in memory
@@ -165,54 +172,112 @@ def create_downloadable_notes(notes_content, filename_prefix="study_notes"):
     # Parse the markdown-like content and convert to PDF elements
     lines = notes_content.split('\n')
     
+    def clean_text(text):
+        """Clean text to remove problematic characters and formatting"""
+        # Remove or replace problematic characters
+        text = text.replace('**', '')  # Remove markdown bold
+        text = text.replace('*', '')   # Remove markdown italic
+        text = text.replace('<', '&lt;')  # Escape HTML
+        text = text.replace('>', '&gt;')  # Escape HTML
+        text = text.replace('&', '&amp;')  # Escape ampersand
+        # Remove any remaining HTML tags
+        import re
+        text = re.sub(r'<[^>]+>', '', text)
+        return text.strip()
+    
     for line in lines:
         line = line.strip()
         if not line:
             story.append(Spacer(1, 6))
             continue
-            
-        # Main title (# Study Notes)
-        if line.startswith('# '):
-            title_text = line[2:].strip()
-            story.append(Paragraph(title_text, title_style))
-            story.append(Spacer(1, 12))
-            
-        # Level 2 headings (## or **)
-        elif line.startswith('## ') or (line.startswith('**') and line.endswith('**')):
-            if line.startswith('## '):
-                heading_text = line[3:].strip()
-            else:
-                heading_text = line.replace('**', '').strip()
-            story.append(Paragraph(heading_text, heading_style))
-            
-        # Level 3 headings (###)
-        elif line.startswith('### '):
-            subheading_text = line[4:].strip()
-            story.append(Paragraph(subheading_text, subheading_style))
-            
-        # Bullet points
-        elif line.startswith('- ') or line.startswith('• '):
-            bullet_text = line[2:].strip()
-            story.append(Paragraph(f"• {bullet_text}", bullet_style))
-            
-        # Horizontal rule
-        elif line.startswith('---'):
-            story.append(Spacer(1, 12))
-            story.append(Paragraph("_" * 50, body_style))
-            story.append(Spacer(1, 12))
-            
-        # Regular paragraph
-        elif line:
-            # Handle bold text
-            formatted_line = line.replace('**', '<b>').replace('**', '</b>')
-            # Handle italic text  
-            formatted_line = formatted_line.replace('*', '<i>').replace('*', '</i>')
-            story.append(Paragraph(formatted_line, body_style))
+        
+        try:
+            # Main title (# Study Notes)
+            if line.startswith('# '):
+                title_text = clean_text(line[2:])
+                story.append(Paragraph(title_text, title_style))
+                story.append(Spacer(1, 12))
+                
+            # Level 2 headings (## or **)
+            elif line.startswith('## ') or (line.startswith('**') and line.endswith('**')):
+                if line.startswith('## '):
+                    heading_text = clean_text(line[3:])
+                else:
+                    heading_text = clean_text(line)
+                story.append(Paragraph(heading_text, heading_style))
+                
+            # Level 3 headings (###)
+            elif line.startswith('### '):
+                subheading_text = clean_text(line[4:])
+                story.append(Paragraph(subheading_text, subheading_style))
+                
+            # Bullet points
+            elif line.startswith('- ') or line.startswith('• '):
+                bullet_text = clean_text(line[2:])
+                story.append(Paragraph(f"• {bullet_text}", bullet_style))
+                
+            # Horizontal rule
+            elif line.startswith('---'):
+                story.append(Spacer(1, 12))
+                # Use a simple line instead of underscores
+                from reportlab.platypus import HRFlowable
+                story.append(HRFlowable(width="100%", thickness=1, lineCap='round', color=HexColor('#CCCCCC')))
+                story.append(Spacer(1, 12))
+                
+            # Regular paragraph
+            elif line:
+                cleaned_line = clean_text(line)
+                if cleaned_line:  # Only add if there's content after cleaning
+                    story.append(Paragraph(cleaned_line, body_style))
+                    
+        except Exception as e:
+            # If there's an error with a specific line, skip it and continue
+            print(f"Error processing line: {line[:50]}... - {str(e)}")
+            continue
     
-    # Build PDF
+    try:
+        # Build PDF
+        doc.build(story)
+        
+        # Get PDF data
+        pdf_data = buffer.getvalue()
+        buffer.close()
+        
+        return pdf_data, filename
+        
+    except Exception as e:
+        buffer.close()
+        print(f"Error building PDF: {str(e)}")
+        # Return a simple text-based PDF as fallback
+        return create_simple_pdf_fallback(notes_content, filename)
+
+def create_simple_pdf_fallback(notes_content, filename):
+    """Create a simple text-only PDF as fallback"""
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    # Add title
+    story.append(Paragraph("Study Notes", styles['Title']))
+    story.append(Spacer(1, 12))
+    
+    # Add content as simple paragraphs
+    lines = notes_content.split('\n')
+    for line in lines:
+        line = line.strip()
+        if line:
+            # Clean the line completely
+            clean_line = line.replace('**', '').replace('*', '').replace('#', '').replace('-', '').strip()
+            if clean_line:
+                try:
+                    story.append(Paragraph(clean_line, styles['Normal']))
+                    story.append(Spacer(1, 6))
+                except:
+                    # If even this fails, skip the line
+                    continue
+    
     doc.build(story)
-    
-    # Get PDF data
     pdf_data = buffer.getvalue()
     buffer.close()
     
@@ -233,10 +298,18 @@ def display_study_notes_generator():
     
     # Show the study notes generator section
     with st.sidebar.expander("📚 Study Notes Generator", expanded=False):
-        st.write(f"📊 **{len(study_content)} Q&A pairs** available for notes")
+        # Simple display without technical details
+        if len(study_content) == 1:
+            st.write(f"📝 **1 question** ready for notes")
+        else:
+            st.write(f"📝 **{len(study_content)} questions** ready for notes")
         
         if st.session_state.get('processed_file_name'):
-            st.write(f"📄 **Document:** {st.session_state.processed_file_name}")
+            # Show just the document name without extension
+            doc_name = st.session_state.processed_file_name
+            if doc_name and doc_name.endswith('.pdf'):
+                doc_name = doc_name.replace('.pdf', '')
+            st.write(f"📄 **From:** {doc_name}")
         
         # Generate notes button
         if st.button("📝 Generate Study Notes", key="generate_notes"):
@@ -244,7 +317,7 @@ def display_study_notes_generator():
                 st.error("LLM not available for generating notes.")
                 return
             
-            with st.spinner("🧠 Analyzing conversation and generating study notes..."):
+            with st.spinner("🧠 Creating your study notes..."):
                 # Generate the notes
                 notes = generate_study_notes(
                     study_content, 
@@ -255,7 +328,7 @@ def display_study_notes_generator():
                 # Store in session state for display
                 st.session_state.generated_notes = notes
                 
-            st.success("✅ Study notes generated!")
+            st.success("✅ Study notes ready!")
             st.rerun()
         
         # Display and download options if notes exist
@@ -265,7 +338,7 @@ def display_study_notes_generator():
             # Download button
             notes_bytes, filename = create_downloadable_notes(
                 st.session_state.generated_notes,
-                st.session_state.get('processed_file_name', 'study_notes').replace('.pdf', '')
+                st.session_state.get('processed_file_name', 'study_notes')
             )
             
             st.download_button(
@@ -301,9 +374,13 @@ def display_notes_modal():
             st.markdown(st.session_state.generated_notes)
             
             # Download button at the bottom
+            filename_base = st.session_state.get('processed_file_name', 'study_notes')
+            if filename_base and filename_base.endswith('.pdf'):
+                filename_base = filename_base.replace('.pdf', '')
+                
             notes_bytes, filename = create_downloadable_notes(
                 st.session_state.generated_notes,
-                st.session_state.get('processed_file_name', 'study_notes').replace('.pdf', '')
+                filename_base
             )
             
             st.download_button(

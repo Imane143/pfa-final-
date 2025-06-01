@@ -6,16 +6,18 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 
-# Database initialization
+# Database initialization (only once per session)
 from database_manager import initialize_database, migrate_from_json
 
 # Check if database exists, initialize if needed
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chatbot_data.db")
 if not os.path.exists(DB_PATH):
-    st.info("First run detected: Setting up database...")
-    initialize_database()
-    migrate_from_json()
-    st.success("Database initialized successfully!")
+    if 'database_initialized' not in st.session_state:
+        st.info("First run detected: Setting up database...")
+        initialize_database()
+        migrate_from_json()
+        st.session_state.database_initialized = True
+        st.success("Database initialized successfully!")
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +27,7 @@ from session_manager import initialize_session_state, debug_log
 from ai_models import initialize_ai_models
 from user_auth import display_login_ui, is_user_authenticated, get_current_username
 from conversation_history import display_history_sidebar, save_current_conversation
+from conversation_rename import display_rename_modal
 from theme_manager import add_theme_selector
 from file_upload_handler import display_file_upload_section
 from chat_handler import (
@@ -95,15 +98,14 @@ else:
     # Chat interface
     display_chat_messages()
 
-    # Handle chat input
+    # Always show chat input area, but handle the logic inside
     handle_chat_input()
 
     # Display study notes modal if requested
     display_notes_modal()
 
-    # Info message if no PDF loaded and no active conversation
-    if not st.session_state.rag_chain and not st.session_state.processed_file_name:
-        st.info("Please upload a PDF document or select a conversation from history to begin chatting.")
+    # Display rename modal if requested
+    display_rename_modal()
 
 # Debug information (only in development)
 if os.getenv("DEBUG") == "true":

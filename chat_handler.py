@@ -60,11 +60,15 @@ def display_prerequisite_toggle():
 
 def handle_chat_input():
     """Handle user chat input and responses"""
-    if not st.session_state.rag_chain:
-        return
-        
+    # Always show the chat input, but provide different behavior based on state
     if prompt := st.chat_input("Your question here...", key="chat_input"):
-        debug_log(f"New user question: {prompt[:50]}...")
+        debug_log(f"New user input: {prompt[:50]}...")
+        
+        # Check if we have a RAG chain ready
+        if not st.session_state.rag_chain:
+            # Show error message if no RAG chain is available
+            st.error("⚠️ Please upload a PDF document first or wait for processing to complete.")
+            return
         
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -78,6 +82,13 @@ def handle_chat_input():
             _handle_prerequisite_response(prompt, active_rag_chain)
         else:
             _handle_new_question(prompt, active_rag_chain)
+    
+    # Show helpful message if no RAG chain but don't prevent input
+    elif not st.session_state.rag_chain:
+        if st.session_state.processed_file_name:
+            st.info("📄 Document processed! You can now ask questions about the content.")
+        elif not st.session_state.processed_file_name:
+            st.info("📤 Please upload a PDF document to start chatting.")
 
 def _handle_prerequisite_response(prompt, active_rag_chain):
     """Handle user response to prerequisite question"""

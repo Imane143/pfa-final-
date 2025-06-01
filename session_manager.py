@@ -58,6 +58,14 @@ def initialize_session_state():
         st.session_state.generated_notes = None
     if 'show_notes_modal' not in st.session_state:
         st.session_state.show_notes_modal = False
+    
+    # Rename conversation states
+    if 'show_rename_modal' not in st.session_state:
+        st.session_state.show_rename_modal = False
+    if 'rename_conversation_id' not in st.session_state:
+        st.session_state.rename_conversation_id = None
+    if 'rename_current_title' not in st.session_state:
+        st.session_state.rename_current_title = None
 
 def reset_conversation_state():
     """Reset conversation-related session states"""
